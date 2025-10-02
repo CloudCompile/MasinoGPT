@@ -20,6 +20,7 @@
     align-items:center;
     background: linear-gradient(135deg,#0f0c29,#302b63,#24243e);
     overflow:hidden;
+    position:relative;
   }
 
   /* --- Glass Container --- */
@@ -32,6 +33,7 @@
     box-shadow: 0 0 40px rgba(0,0,0,0.4);
     overflow:hidden;
     animation: pulse 10s infinite alternate;
+    position:relative;
   }
 
   @keyframes pulse {
@@ -43,16 +45,37 @@
   /* --- Chat Window --- */
   .chat-window {
     flex:1; padding:20px; overflow-y:auto; display:flex; flex-direction:column; gap:15px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
   }
 
   .message {
     max-width:80%; padding:12px 18px; border-radius:15px;
-    background: rgba(255,255,255,0.1); color:white; word-wrap:break-word;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px); color:white; word-wrap:break-word;
+    position:relative;
+    background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+    animation: glow 4s infinite alternate;
+  }
+
+  @keyframes glow {
+    0%{ box-shadow: 0 0 5px rgba(0,150,255,0.2); }
+    50%{ box-shadow: 0 0 15px rgba(0,150,255,0.5); }
+    100%{ box-shadow: 0 0 5px rgba(0,150,255,0.2); }
   }
 
   .message.user { align-self:flex-end; background: rgba(0,150,255,0.3); }
   .message.bot { align-self:flex-start; background: rgba(0,0,0,0.3); }
+
+  /* Typing indicator */
+  .typing { display:flex; gap:5px; align-items:center; }
+  .dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,0.8);
+    animation: bounce 1.4s infinite; }
+  .dot:nth-child(2) { animation-delay:0.2s; }
+  .dot:nth-child(3) { animation-delay:0.4s; }
+
+  @keyframes bounce {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+  }
 
   /* --- Input Area --- */
   .input-container {
@@ -72,24 +95,33 @@
   .input-container button:hover { background: rgba(0,150,255,0.9); }
 
   /* --- Image Message --- */
-  .message img {
-    max-width:100%; border-radius:12px; margin-top:5px;
-  }
+  .message img { max-width:100%; border-radius:12px; margin-top:5px; animation: fadeIn 0.5s ease; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
 
   /* --- Scrollbar --- */
   .chat-window::-webkit-scrollbar { width:8px; }
   .chat-window::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius:4px; }
 
-  /* --- Liquid Cursor --- */
+  /* --- Cursor --- */
   body { cursor:none; }
-  .cursor { position:fixed; top:0; left:0; width:20px; height:20px; border-radius:50%; background: rgba(0,150,255,0.7); pointer-events:none; transform:translate(-50%,-50%); mix-blend-mode: difference; transition: transform 0.1s linear; z-index:9999; }
+  .cursor { position:fixed; top:0; left:0; width:20px; height:20px; border-radius:50%; 
+    background: rgba(0,150,255,0.7); pointer-events:none; transform:translate(-50%,-50%);
+    mix-blend-mode: difference; transition: transform 0.1s linear; z-index:9999; }
+
+  /* --- Online/Offline toggle --- */
+  .toggle-container { position:absolute; top:10px; right:20px; display:flex; align-items:center; gap:8px; }
+  .toggle-container label { color:white; font-weight:500; }
+  .toggle-container input[type=checkbox] { width:40px; height:20px; }
 </style>
 </head>
 <body>
 
 <div class="glass-container">
+  <div class="toggle-container">
+    <label>Offline Mode</label>
+    <input type="checkbox" id="offlineToggle">
+  </div>
   <div class="chat-window" id="chatWindow"></div>
-
   <div class="input-container">
     <input type="text" id="userInput" placeholder="Type a message or '/image [prompt]'">
     <button id="sendBtn">Send</button>
@@ -103,6 +135,7 @@
   const userInput = document.getElementById('userInput');
   const sendBtn = document.getElementById('sendBtn');
   const cursor = document.getElementById('cursor');
+  const offlineToggle = document.getElementById('offlineToggle');
 
   document.addEventListener('mousemove', e => {
     cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
@@ -116,24 +149,34 @@
 
     if(message.startsWith('/image ')) {
       const prompt = message.slice(7);
-      appendMessage('bot', 'Generating image...');
+      const imgMsg = appendMessage('bot','Generating image...');
       const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`;
-      const imgMsg = document.createElement('div');
-      imgMsg.classList.add('message','bot');
       const imgEl = document.createElement('img');
       imgEl.src = imgUrl;
-      imgMsg.appendChild(imgEl);
-      chatWindow.appendChild(imgMsg);
-      chatWindow.scrollTop = chatWindow.scrollHeight;
+      imgEl.onload = ()=>{ imgMsg.textContent=''; imgMsg.appendChild(imgEl); chatWindow.scrollTop=chatWindow.scrollHeight; };
       return;
     }
 
-    // Text AI (Pollinations)
+    // Typing indicator
+    const typingMsg = appendTyping();
+
+    if(offlineToggle.checked){
+      // --- WebLLM Offline placeholder ---
+      setTimeout(()=>{ 
+        removeTyping(typingMsg); 
+        appendMessage('bot', "Offline AI: WebLLM response (stub)"); 
+      }, 1000);
+      return;
+    }
+
+    // Online Pollinations text
     try{
       const res = await fetch(`https://text.pollinations.ai/predict?text=${encodeURIComponent(message)}`);
       const data = await res.json();
+      removeTyping(typingMsg);
       appendMessage('bot', data.output || "No response");
     } catch(e){
+      removeTyping(typingMsg);
       appendMessage('bot', "Error: Could not reach API");
     }
   }
@@ -144,16 +187,27 @@
     msg.textContent = text;
     chatWindow.appendChild(msg);
     chatWindow.scrollTop = chatWindow.scrollHeight;
+    return msg;
+  }
+
+  function appendTyping(){
+    const typingMsg = document.createElement('div');
+    typingMsg.classList.add('message','bot');
+    const dots = document.createElement('div');
+    dots.classList.add('typing');
+    for(let i=0;i<3;i++){ const dot = document.createElement('div'); dot.classList.add('dot'); dots.appendChild(dot); }
+    typingMsg.appendChild(dots);
+    chatWindow.appendChild(typingMsg);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+    return typingMsg;
+  }
+
+  function removeTyping(msg){
+    if(msg) msg.remove();
   }
 
   sendBtn.addEventListener('click', sendMessage);
   userInput.addEventListener('keydown', e => { if(e.key==='Enter') sendMessage(); });
-
-  /* --- WebLLM Offline placeholder --- */
-  const offlineMode = false; // set true to use WebLLM
-  if(offlineMode){
-    // here you can load WebLLM WASM model and override sendMessage
-  }
 </script>
 
 </body>
